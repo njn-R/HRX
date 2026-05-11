@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --color-glass: rgba(30, 30, 35, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.08);
+  --color-sidebar: #131316;
+  --color-editor: #1e1e24;
+  --color-accent: #8b5cf6;
+  --color-accent-hover: #7c3aed;
+  
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  :root {
+    --bg-color: #0d0d0f;
+    --text-color: #e2e8f0;
+  }
+  
+  body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    margin: 0;
+    overflow: hidden; /* App-like feel */
+  }
+
+  /* Scrollbar styles */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+/* Custom error lens decoration for Monaco */
+.error-lens-decoration {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-radius: 2px;
+}
+
+.error-lens-message {
+  color: #ef4444;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  font-style: italic;
+  padding-left: 10px;
+  opacity: 0.8;
+}
