@@ -1,20 +1,51 @@
 import { useRef, useEffect, useState } from 'react';
-import Editor, { useMonaco } from '@monaco-editor/react';
-import type { OnMount } from '@monaco-editor/react';
+import Editor, { DiffEditor, useMonaco } from '@monaco-editor/react';
 import { Save } from 'lucide-react';
+import type { ErrorMarker } from '../types';
 
+/**
+ * Props for the EditorPane component.
+ */
 interface EditorPaneProps {
+  /** The absolute path of the file currently being edited */
   filePath: string;
+  /** The text content of the file */
   content: string;
+  /** Callback triggered when the user saves the file (manually or via auto-save) */
   onSave: (content: string) => void;
+  /** Whether auto-save is enabled (saves after a short delay on typing) */
+  autoSave?: boolean;
+  /** Whether the inline error lens (diagnostics) feature is enabled */
+  errorLensEnabled?: boolean;
+  /** Callback triggered when the editor's error markers (diagnostics) update */
+  onMarkersUpdate?: (markers: ErrorMarker[]) => void;
+  /** Whether the editor is in diff mode (showing original vs current content) */
+  diffMode?: boolean;
+  /** The original content of the file, used only when diffMode is true */
+  originalContent?: string;
 }
 
-export default function EditorPane({ filePath, content, onSave }: EditorPaneProps) {
+/**
+ * The main editor pane utilizing Monaco Editor.
+ * Supports standard text editing, auto-save functionality, error lens integration,
+ * and a side-by-side diff mode.
+ */
+export default function EditorPane({ 
+  filePath, 
+  content, 
+  onSave,
+  autoSave = false,
+  errorLensEnabled = true,
+  onMarkersUpdate,
+  diffMode = false,
+  originalContent = ''
+}: EditorPaneProps) {
   const monaco = useMonaco();
   const editorRef = useRef<any>(null);
   const [currentContent, setCurrentContent] = useState(content);
-  const [decorations, setDecorations] = useState<string[]>([]);
+  const [, setDecorations] = useState<string[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Update editor content when active file changes
   useEffect(() => {
@@ -22,7 +53,28 @@ export default function EditorPane({ filePath, content, onSave }: EditorPaneProp
     setHasUnsavedChanges(false);
   }, [filePath, content]);
 
-  const handleEditorMount: OnMount = (editor, monaco) => {
+  const handleChange = (value: string | undefined) => {
+    if (value !== undefined) {
+      setCurrentContent(value);
+      setHasUnsavedChanges(value !== content);
+      
+      if (autoSave) {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = setTimeout(() => {
+          onSave(value);
+          setHasUnsavedChanges(false);
+        }, 1000);
+      }
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, []);
+
+  const handleEditorMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
 
     // Premium dark theme configuration
@@ -41,14 +93,30 @@ export default function EditorPane({ filePath, content, onSave }: EditorPaneProp
     });
     monaco.editor.setTheme('premiumDark');
 
-    // Error Lens Implementation
     const updateErrorLens = () => {
-      const model = editor.getModel();
-      if (!model) return;
+      let actualModel;
+      let targetEditor = editor;
+      if (diffMode) {
+        targetEditor = editor.getModifiedEditor();
+        actualModel = targetEditor.getModel();
+      } else {
+        actualModel = editor.getModel();
+      }
       
-      const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+      if (!actualModel) return;
       
-      const newDecorations = markers.map(marker => {
+      const markers = monaco.editor.getModelMarkers({ resource: actualModel.uri });
+      
+      if (onMarkersUpdate) {
+        onMarkersUpdate(markers);
+      }
+
+      if (!errorLensEnabled) {
+        setDecorations(prev => targetEditor.deltaDecorations(prev, []));
+        return;
+      }
+      
+      const newDecorations = markers.map((marker: any) => {
         return {
           range: new monaco.Range(marker.startLineNumber, 1, marker.startLineNumber, 1),
           options: {
@@ -62,32 +130,42 @@ export default function EditorPane({ filePath, content, onSave }: EditorPaneProp
         };
       });
 
-      setDecorations(prev => editor.deltaDecorations(prev, newDecorations));
+      setDecorations(prev => targetEditor.deltaDecorations(prev, newDecorations));
     };
 
-    // Listen for marker changes (diagnostics/errors)
     const disposable = monaco.editor.onDidChangeMarkers(updateErrorLens);
-    
-    // Initial check
     updateErrorLens();
 
     // Add Save shortcut (Ctrl/Cmd + S)
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      onSave(editor.getValue());
+    const activeEditor = diffMode ? editor.getModifiedEditor() : editor;
+    activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      onSave(activeEditor.getValue());
       setHasUnsavedChanges(false);
     });
+
+    // Also handle changes for diff editor since it doesn't have onChange prop in some wrappers
+    if (diffMode) {
+      const activeModel = activeEditor.getModel();
+      activeModel.onDidChangeContent(() => {
+        handleChange(activeEditor.getValue());
+      });
+    }
 
     return () => {
       disposable.dispose();
     };
   };
 
-  const handleChange = (value: string | undefined) => {
-    if (value !== undefined) {
-      setCurrentContent(value);
-      setHasUnsavedChanges(value !== content);
+  useEffect(() => {
+    if (editorRef.current && monaco) {
+      if (!errorLensEnabled) {
+        const targetEditor = diffMode ? editorRef.current.getModifiedEditor() : editorRef.current;
+        if (targetEditor) {
+          setDecorations(prev => targetEditor.deltaDecorations(prev, []));
+        }
+      }
     }
-  };
+  }, [errorLensEnabled, diffMode, monaco]);
 
   // Determine language based on file extension
   const getLanguage = (path: string) => {
@@ -123,26 +201,47 @@ export default function EditorPane({ filePath, content, onSave }: EditorPaneProp
         </button>
       </div>
       <div className="flex-1 relative">
-        <Editor
-          height="100%"
-          language={getLanguage(filePath)}
-          theme="premiumDark"
-          value={currentContent}
-          onChange={handleChange}
-          onMount={handleEditorMount}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
-            wordWrap: 'on',
-            padding: { top: 16 },
-            scrollBeyondLastLine: false,
-            smoothScrolling: true,
-            cursorBlinking: 'smooth',
-            cursorSmoothCaretAnimation: 'on',
-            formatOnPaste: true,
-          }}
-        />
+        {diffMode ? (
+          <DiffEditor
+            height="100%"
+            language={getLanguage(filePath)}
+            theme="premiumDark"
+            original={originalContent}
+            modified={currentContent}
+            onMount={handleEditorMount}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+              wordWrap: 'on',
+              padding: { top: 16 },
+              scrollBeyondLastLine: false,
+              smoothScrolling: true,
+              renderSideBySide: true,
+            }}
+          />
+        ) : (
+          <Editor
+            height="100%"
+            language={getLanguage(filePath)}
+            theme="premiumDark"
+            value={currentContent}
+            onChange={handleChange}
+            onMount={handleEditorMount}
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              fontFamily: "'JetBrains Mono', 'Fira Code', Consolas, monospace",
+              wordWrap: 'on',
+              padding: { top: 16 },
+              scrollBeyondLastLine: false,
+              smoothScrolling: true,
+              cursorBlinking: 'smooth',
+              cursorSmoothCaretAnimation: 'on',
+              formatOnPaste: true,
+            }}
+          />
+        )}
       </div>
     </div>
   );

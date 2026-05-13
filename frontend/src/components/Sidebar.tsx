@@ -1,27 +1,43 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, File, Folder, GitBranch, Files, FolderOpen } from 'lucide-react';
+import { ChevronRight, ChevronDown, File, Folder, GitBranch, Files, FolderPlus, X } from 'lucide-react';
 import type { FileNode } from '../types';
 import GitStatus from './GitStatus';
 
+/**
+ * Props for the Sidebar component.
+ */
 interface SidebarProps {
   tree: FileNode[];
   onFileSelect: (path: string) => void;
+  onDiffSelect: (repoPath: string, path: string) => void;
   activeFile: string | null;
   onRefreshTree: () => void;
-  currentFolder: string;
-  onOpenFolder: (path: string) => void;
+  workDirs: string[];
+  onAddFolder: (path: string) => void;
+  onRemoveFolder: (path: string) => void;
 }
 
+/**
+ * Renders a single node (file or directory) in the file tree recursively.
+ * 
+ * @param node - The current file or directory node to render.
+ * @param onSelect - Callback when a file is clicked.
+ * @param activeFile - The path of the currently active file for highlighting.
+ * @param level - The depth level of this node (used for indentation).
+ * @param onRemoveRoot - Optional callback to remove a root workspace folder.
+ */
 const FileTreeNode = ({ 
   node, 
   onSelect, 
   activeFile, 
-  level = 0 
+  level = 0,
+  onRemoveRoot
 }: { 
   node: FileNode; 
   onSelect: (path: string) => void;
   activeFile: string | null;
   level?: number;
+  onRemoveRoot?: (path: string) => void;
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const isDir = node.type === 'directory';
@@ -38,23 +54,33 @@ const FileTreeNode = ({
   return (
     <div>
       <div 
-        className={`flex items-center py-1 px-2 cursor-pointer hover:bg-white/5 transition-colors ${isActive ? 'bg-accent/20 text-accent' : 'text-gray-300'}`}
+        className={`group flex items-center py-1 px-2 cursor-pointer hover:bg-white/5 transition-colors ${isActive ? 'bg-accent/20 text-accent' : 'text-gray-300'}`}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleClick}
       >
         {isDir ? (
-          isOpen ? <ChevronDown size={14} className="mr-1 opacity-70" /> : <ChevronRight size={14} className="mr-1 opacity-70" />
+          isOpen ? <ChevronDown size={14} className="mr-1 opacity-70 flex-shrink-0" /> : <ChevronRight size={14} className="mr-1 opacity-70 flex-shrink-0" />
         ) : (
-          <span className="w-3.5 mr-1 inline-block" />
+          <span className="w-3.5 mr-1 inline-block flex-shrink-0" />
         )}
         
         {isDir ? (
-          <Folder size={14} className="mr-2 text-blue-400" />
+          <Folder size={14} className="mr-2 text-blue-400 flex-shrink-0" />
         ) : (
-          <File size={14} className="mr-2 opacity-70" />
+          <File size={14} className="mr-2 opacity-70 flex-shrink-0" />
         )}
         
-        <span className="text-sm truncate select-none">{node.name}</span>
+        <span className="text-sm truncate select-none flex-1">{node.name}</span>
+
+        {level === 0 && onRemoveRoot && (
+          <button 
+            onClick={(e) => { e.stopPropagation(); onRemoveRoot(node.path); }}
+            className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 p-0.5 ml-1 flex-shrink-0"
+            title="Remove Folder"
+          >
+            <X size={12} />
+          </button>
+        )}
       </div>
       
       {isDir && isOpen && node.children && (
@@ -66,6 +92,7 @@ const FileTreeNode = ({
               onSelect={onSelect} 
               activeFile={activeFile}
               level={level + 1} 
+              onRemoveRoot={onRemoveRoot}
             />
           ))}
         </div>
@@ -74,16 +101,19 @@ const FileTreeNode = ({
   );
 };
 
-export default function Sidebar({ tree, onFileSelect, activeFile, onRefreshTree, currentFolder, onOpenFolder }: SidebarProps) {
+/**
+ * The sidebar navigation component.
+ * Contains tabs for the File Explorer and Source Control (Git).
+ * Manages the rendering of the workspace file tree and Git status.
+ */
+export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, onRefreshTree, workDirs, onAddFolder, onRemoveFolder }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'files' | 'git'>('files');
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [folderPath, setFolderPath] = useState('');
 
-  const folderName = currentFolder ? currentFolder.split('\\').pop() || currentFolder.split('/').pop() || currentFolder : 'No folder';
-
-  const handleOpenFolder = () => {
+  const handleAddFolder = () => {
     if (folderPath.trim()) {
-      onOpenFolder(folderPath.trim());
+      onAddFolder(folderPath.trim());
       setFolderPath('');
       setShowFolderInput(false);
     }
@@ -91,7 +121,7 @@ export default function Sidebar({ tree, onFileSelect, activeFile, onRefreshTree,
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleOpenFolder();
+      handleAddFolder();
     } else if (e.key === 'Escape') {
       setShowFolderInput(false);
       setFolderPath('');
@@ -121,14 +151,14 @@ export default function Sidebar({ tree, onFileSelect, activeFile, onRefreshTree,
         {activeTab === 'files' && (
           <div>
             <div className="px-4 py-1 flex items-center justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              <span className="truncate" title={currentFolder}>{folderName}</span>
+              <span>Explorer</span>
               <div className="flex items-center space-x-1 flex-shrink-0">
                 <button 
                   onClick={() => setShowFolderInput(!showFolderInput)} 
                   className="hover:text-white transition-colors" 
-                  title="Open Folder"
+                  title="Add Folder to Workspace"
                 >
-                  <FolderOpen size={14} />
+                  <FolderPlus size={14} />
                 </button>
                 <button onClick={onRefreshTree} className="hover:text-white transition-colors" title="Refresh">⟳</button>
               </div>
@@ -147,10 +177,10 @@ export default function Sidebar({ tree, onFileSelect, activeFile, onRefreshTree,
                 />
                 <div className="flex space-x-1 mt-1">
                   <button
-                    onClick={handleOpenFolder}
+                    onClick={handleAddFolder}
                     className="flex-1 bg-accent text-white text-xs py-1 rounded hover:bg-accent-hover transition-colors"
                   >
-                    Open
+                    Add
                   </button>
                   <button
                     onClick={() => { setShowFolderInput(false); setFolderPath(''); }}
@@ -168,13 +198,14 @@ export default function Sidebar({ tree, onFileSelect, activeFile, onRefreshTree,
                 node={node} 
                 onSelect={onFileSelect} 
                 activeFile={activeFile} 
+                onRemoveRoot={onRemoveFolder}
               />
             ))}
           </div>
         )}
         
         {activeTab === 'git' && (
-          <GitStatus />
+          <GitStatus workDirs={workDirs} onDiffSelect={onDiffSelect} />
         )}
       </div>
     </div>
