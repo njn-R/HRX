@@ -282,6 +282,11 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            #[cfg(not(debug_assertions))]
+            {
+                // Ensure log is still initialized or just skip it
+            }
+            app.handle().plugin(tauri_plugin_dialog::init())?;
             Ok(())
         })
         .run(tauri::generate_context!())

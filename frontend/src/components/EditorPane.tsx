@@ -46,6 +46,10 @@ export default function EditorPane({
   const [, setDecorations] = useState<string[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Track listeners for cleanup since Monaco's onMount doesn't use the return value
+  const disposableRef = useRef<any>(null);
+  const contentListenerRef = useRef<any>(null);
 
   // Update editor content when active file changes
   useEffect(() => {
@@ -71,6 +75,8 @@ export default function EditorPane({
   useEffect(() => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (disposableRef.current) disposableRef.current.dispose();
+      if (contentListenerRef.current) contentListenerRef.current.dispose();
     };
   }, []);
 
@@ -96,11 +102,15 @@ export default function EditorPane({
     const updateErrorLens = () => {
       let actualModel;
       let targetEditor = editor;
-      if (diffMode) {
-        targetEditor = editor.getModifiedEditor();
+      try {
+        if (diffMode && typeof editor.getModifiedEditor === 'function') {
+          targetEditor = editor.getModifiedEditor();
+        }
+        if (!targetEditor) return;
         actualModel = targetEditor.getModel();
-      } else {
-        actualModel = editor.getModel();
+      } catch (e) {
+        // Editor might be disposed
+        return;
       }
       
       if (!actualModel) return;
@@ -112,7 +122,14 @@ export default function EditorPane({
       }
 
       if (!errorLensEnabled) {
-        setDecorations(prev => targetEditor.deltaDecorations(prev, []));
+        setDecorations(prev => {
+          try {
+            if (targetEditor && typeof targetEditor.deltaDecorations === 'function') {
+              return targetEditor.deltaDecorations(prev, []);
+            }
+          } catch(e) {}
+          return prev;
+        });
         return;
       }
       
@@ -130,39 +147,54 @@ export default function EditorPane({
         };
       });
 
-      setDecorations(prev => targetEditor.deltaDecorations(prev, newDecorations));
+      setDecorations(prev => {
+        try {
+          if (targetEditor && typeof targetEditor.deltaDecorations === 'function') {
+            return targetEditor.deltaDecorations(prev, newDecorations);
+          }
+        } catch(e) {}
+        return prev;
+      });
     };
 
-    const disposable = monaco.editor.onDidChangeMarkers(updateErrorLens);
+    if (disposableRef.current) disposableRef.current.dispose();
+    disposableRef.current = monaco.editor.onDidChangeMarkers(updateErrorLens);
     updateErrorLens();
 
     // Add Save shortcut (Ctrl/Cmd + S)
-    const activeEditor = diffMode ? editor.getModifiedEditor() : editor;
-    activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      onSave(activeEditor.getValue());
-      setHasUnsavedChanges(false);
-    });
+    try {
+      const activeEditor = diffMode && typeof editor.getModifiedEditor === 'function' ? editor.getModifiedEditor() : editor;
+      if (activeEditor) {
+        activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+          onSave(activeEditor.getValue());
+          setHasUnsavedChanges(false);
+        });
 
-    // Also handle changes for diff editor since it doesn't have onChange prop in some wrappers
-    if (diffMode) {
-      const activeModel = activeEditor.getModel();
-      activeModel.onDidChangeContent(() => {
-        handleChange(activeEditor.getValue());
-      });
+        // Also handle changes for diff editor since it doesn't have onChange prop in some wrappers
+        if (diffMode) {
+          const activeModel = activeEditor.getModel();
+          if (activeModel) {
+            if (contentListenerRef.current) contentListenerRef.current.dispose();
+            contentListenerRef.current = activeModel.onDidChangeContent(() => {
+              handleChange(activeEditor.getValue());
+            });
+          }
+        }
+      }
+    } catch (e) {
+      // Editor might be disposed
     }
-
-    return () => {
-      disposable.dispose();
-    };
   };
 
   useEffect(() => {
     if (editorRef.current && monaco) {
       if (!errorLensEnabled) {
-        const targetEditor = diffMode ? editorRef.current.getModifiedEditor() : editorRef.current;
-        if (targetEditor) {
-          setDecorations(prev => targetEditor.deltaDecorations(prev, []));
-        }
+        try {
+          const targetEditor = diffMode && typeof editorRef.current.getModifiedEditor === 'function' ? editorRef.current.getModifiedEditor() : editorRef.current;
+          if (targetEditor && typeof targetEditor.deltaDecorations === 'function') {
+            setDecorations(prev => targetEditor.deltaDecorations(prev, []));
+          }
+        } catch(e) {}
       }
     }
   }, [errorLensEnabled, diffMode, monaco]);

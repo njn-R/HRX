@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, File, Folder, GitBranch, Files, FolderPlus, X } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
 import type { FileNode } from '../types';
 import GitStatus from './GitStatus';
 
@@ -108,23 +109,18 @@ const FileTreeNode = ({
  */
 export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, onRefreshTree, workDirs, onAddFolder, onRemoveFolder }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'files' | 'git'>('files');
-  const [showFolderInput, setShowFolderInput] = useState(false);
-  const [folderPath, setFolderPath] = useState('');
 
-  const handleAddFolder = () => {
-    if (folderPath.trim()) {
-      onAddFolder(folderPath.trim());
-      setFolderPath('');
-      setShowFolderInput(false);
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      handleAddFolder();
-    } else if (e.key === 'Escape') {
-      setShowFolderInput(false);
-      setFolderPath('');
+  const handleAddFolderClick = async () => {
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+      });
+      if (selected && typeof selected === 'string') {
+        onAddFolder(selected);
+      }
+    } catch (error) {
+      console.error('Failed to open dialog:', error);
     }
   };
 
@@ -154,7 +150,7 @@ export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, 
               <span>Explorer</span>
               <div className="flex items-center space-x-1 flex-shrink-0">
                 <button 
-                  onClick={() => setShowFolderInput(!showFolderInput)} 
+                  onClick={handleAddFolderClick} 
                   className="hover:text-white transition-colors" 
                   title="Add Folder to Workspace"
                 >
@@ -163,34 +159,6 @@ export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, 
                 <button onClick={onRefreshTree} className="hover:text-white transition-colors" title="Refresh">⟳</button>
               </div>
             </div>
-
-            {showFolderInput && (
-              <div className="px-3 mb-3">
-                <input
-                  type="text"
-                  value={folderPath}
-                  onChange={(e) => setFolderPath(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Enter folder path..."
-                  className="w-full bg-black/30 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-accent font-mono"
-                  autoFocus
-                />
-                <div className="flex space-x-1 mt-1">
-                  <button
-                    onClick={handleAddFolder}
-                    className="flex-1 bg-accent text-white text-xs py-1 rounded hover:bg-accent-hover transition-colors"
-                  >
-                    Add
-                  </button>
-                  <button
-                    onClick={() => { setShowFolderInput(false); setFolderPath(''); }}
-                    className="flex-1 bg-white/5 text-gray-400 text-xs py-1 rounded hover:bg-white/10 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
 
             {tree.map(node => (
               <FileTreeNode 
