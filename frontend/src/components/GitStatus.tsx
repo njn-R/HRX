@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, GitBranch } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { GitRepoStatus } from '../types';
 
@@ -20,6 +20,8 @@ export default function GitStatus({ workDirs, onDiffSelect }: GitStatusProps) {
   const [messages, setMessages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [branches, setBranches] = useState<Record<string, string[]>>({});
+  const [currentBranch, setCurrentBranch] = useState<Record<string, string>>({});
 
   /**
    * Fetches the current git status for all workspace directories from the backend.
@@ -29,6 +31,22 @@ export default function GitStatus({ workDirs, onDiffSelect }: GitStatusProps) {
     try {
       const data = await invoke<GitRepoStatus[]>('git_status');
       setStatuses(data);
+
+      const newBranches: Record<string, string[]> = {};
+      const newCurrentBranch: Record<string, string> = {};
+      
+      for (const dir of workDirs) {
+        try {
+          const b = await invoke<string[]>('git_branches', { repoPath: dir });
+          const curr = await invoke<string>('git_current_branch', { repoPath: dir });
+          newBranches[dir] = b;
+          newCurrentBranch[dir] = curr;
+        } catch (e) {
+          console.error(`Failed to fetch branches for ${dir}`, e);
+        }
+      }
+      setBranches(newBranches);
+      setCurrentBranch(newCurrentBranch);
     } catch (error) {
       console.error('Failed to fetch git status:', error);
     } finally {
@@ -62,6 +80,16 @@ export default function GitStatus({ workDirs, onDiffSelect }: GitStatusProps) {
     }
   };
 
+  const handleBranchChange = async (repoPath: string, branch: string) => {
+    try {
+      await invoke('git_checkout', { repoPath, branch });
+      fetchStatus();
+    } catch (error) {
+      console.error('Failed to checkout branch:', error);
+      alert(`Checkout failed: ${error}`);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-1 flex items-center justify-between text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
@@ -87,8 +115,24 @@ export default function GitStatus({ workDirs, onDiffSelect }: GitStatusProps) {
             
             return (
               <div key={idx} className="bg-black/10 rounded p-2 border border-white/5">
-                <div className="text-xs font-medium text-gray-400 mb-2 truncate" title={repoStatus.repo_path}>
-                  {folderName}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-medium text-gray-400 truncate" title={repoStatus.repo_path}>
+                    {folderName}
+                  </div>
+                  {branches[repoStatus.repo_path] && (
+                    <div className="flex items-center space-x-1 text-[10px] bg-black/30 rounded px-1.5 py-0.5 border border-white/5">
+                      <GitBranch size={10} className="text-gray-400" />
+                      <select 
+                        value={currentBranch[repoStatus.repo_path] || ''} 
+                        onChange={(e) => handleBranchChange(repoStatus.repo_path, e.target.value)}
+                        className="bg-transparent text-gray-300 focus:outline-none cursor-pointer max-w-[80px]"
+                      >
+                        {branches[repoStatus.repo_path].map(b => (
+                          <option key={b} value={b} className="bg-[#1e1e1e]">{b}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="mb-3">

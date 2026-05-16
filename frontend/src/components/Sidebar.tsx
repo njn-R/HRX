@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, File, Folder, GitBranch, Files, FolderPlus, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, File, Folder, GitBranch, Files, FolderPlus, X, PlaySquare } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { FileNode } from '../types';
 import GitStatus from './GitStatus';
+import ProjectRunner from './ProjectRunner';
+import type { ProjectConfig } from './ProjectRunner';
 
 /**
  * Props for the Sidebar component.
@@ -16,6 +18,7 @@ interface SidebarProps {
   workDirs: string[];
   onAddFolder: (path: string) => void;
   onRemoveFolder: (path: string) => void;
+  onStartProjects: (projects: ProjectConfig[]) => void;
 }
 
 /**
@@ -107,8 +110,8 @@ const FileTreeNode = ({
  * Contains tabs for the File Explorer and Source Control (Git).
  * Manages the rendering of the workspace file tree and Git status.
  */
-export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, onRefreshTree, workDirs, onAddFolder, onRemoveFolder }: SidebarProps) {
-  const [activeTab, setActiveTab] = useState<'files' | 'git'>('files');
+export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, onRefreshTree, workDirs, onAddFolder, onRemoveFolder, onStartProjects }: SidebarProps) {
+  const [activeTab, setActiveTab] = useState<'files' | 'git' | 'runner'>('files');
 
   const handleAddFolderClick = async () => {
     try {
@@ -140,6 +143,13 @@ export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, 
           title="Source Control"
         >
           <GitBranch size={18} />
+        </button>
+        <button 
+          onClick={() => setActiveTab('runner')}
+          className={`p-2 rounded flex items-center justify-center transition-colors ${activeTab === 'runner' ? 'text-accent bg-white/5' : 'text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}
+          title="Project Runner"
+        >
+          <PlaySquare size={18} />
         </button>
       </div>
 
@@ -174,6 +184,10 @@ export default function Sidebar({ tree, onFileSelect, onDiffSelect, activeFile, 
         
         {activeTab === 'git' && (
           <GitStatus workDirs={workDirs} onDiffSelect={onDiffSelect} />
+        )}
+        
+        {activeTab === 'runner' && (
+          <ProjectRunner onStartProjects={onStartProjects} />
         )}
       </div>
     </div>

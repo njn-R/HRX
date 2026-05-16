@@ -5,13 +5,18 @@ use std::sync::Mutex;
 use std::path::{Path, PathBuf};
 use serde::{Serialize, Deserialize};
 use std::fs;
-use std::process::Command;
-use tauri::State;
+use std::collections::HashMap;
+use std::process::{Command, Child, Stdio};
+use std::io::{BufReader, BufRead, Write};
+use std::thread;
+use tauri::{State, Emitter, Window};
 
 /// The global application state managed by Tauri.
 pub struct AppState {
     /// A thread-safe list of active workspace directory paths.
     work_dirs: Mutex<Vec<PathBuf>>,
+    /// A registry of spawned child processes mapped by a unique ID.
+    processes: Mutex<HashMap<String, Child>>,
 }
 
 /// Represents a file or directory node in the workspace file tree.
@@ -223,6 +228,59 @@ fn git_diff(repo_path: String, file_path: String) -> Result<String, String> {
     }
 }
 
+/// Retrieves all branches for a given repository.
+#[tauri::command]
+fn git_branches(repo_path: String) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("branch")
+        .arg("--format=%(refname:short)")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let branches = stdout.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        Ok(branches)
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Retrieves the current branch for a given repository.
+#[tauri::command]
+fn git_current_branch(repo_path: String) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("branch")
+        .arg("--show-current")
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Checks out a specific branch for a given repository.
+#[tauri::command]
+fn git_checkout(repo_path: String, branch: String) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("checkout")
+        .arg(&branch)
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
 /// Retrieves the list of currently active workspace directories.
 #[tauri::command]
 fn get_work_dirs(state: State<'_, AppState>) -> Result<Vec<String>, String> {
@@ -254,6 +312,72 @@ fn remove_folder(folder_path: String, state: State<'_, AppState>) -> Result<(), 
     Ok(())
 }
 
+/// Spawns a new terminal process.
+#[tauri::command]
+fn spawn_process(id: String, cmd: String, cwd: String, window: Window, state: State<'_, AppState>) -> Result<(), String> {
+    let mut child = Command::new("cmd")
+        .args(["/C", &cmd])
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let stdout = child.stdout.take().ok_or("Failed to open stdout")?;
+    let stderr = child.stderr.take().ok_or("Failed to open stderr")?;
+    
+    let id_clone1 = id.clone();
+    let window_clone1 = window.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone1.emit(&format!("terminal-output-{}", id_clone1), format!("{}\r\n", l));
+            }
+        }
+        let _ = window_clone1.emit(&format!("terminal-output-{}", id_clone1), "\r\n[Process Finished]\r\n");
+    });
+
+    let id_clone2 = id.clone();
+    let window_clone2 = window.clone();
+    thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone2.emit(&format!("terminal-output-{}", id_clone2), format!("{}\r\n", l));
+            }
+        }
+    });
+
+    let mut procs = state.processes.lock().unwrap();
+    procs.insert(id, child);
+    Ok(())
+}
+
+/// Writes input to a running terminal process.
+#[tauri::command]
+fn write_process(id: String, data: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut procs = state.processes.lock().unwrap();
+    if let Some(child) = procs.get_mut(&id) {
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(data.as_bytes());
+            let _ = stdin.flush();
+        }
+    }
+    Ok(())
+}
+
+/// Kills a running terminal process.
+#[tauri::command]
+fn kill_process(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut procs = state.processes.lock().unwrap();
+    if let Some(mut child) = procs.remove(&id) {
+        let _ = child.kill();
+    }
+    Ok(())
+}
+
 /// Entry point for the Tauri application, registering state, plugins, and commands.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -262,6 +386,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             work_dirs: Mutex::new(vec![initial_dir]),
+            processes: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             get_files,
@@ -270,9 +395,15 @@ pub fn run() {
             git_status,
             git_commit,
             git_diff,
+            git_branches,
+            git_current_branch,
+            git_checkout,
             get_work_dirs,
             add_folder,
-            remove_folder
+            remove_folder,
+            spawn_process,
+            write_process,
+            kill_process
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

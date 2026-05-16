@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import EditorPane from './components/EditorPane';
-import { FileCode2, AlertCircle, X } from 'lucide-react';
+import Terminal from './components/Terminal';
+import type { ProjectConfig } from './components/ProjectRunner';
+import { FileCode2, AlertCircle, X, TerminalSquare } from 'lucide-react';
 import type { FileNode, ErrorMarker } from './types';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -18,9 +20,12 @@ function App() {
   
   const [autoSave, setAutoSave] = useState(false);
   const [errorLensEnabled, setErrorLensEnabled] = useState(true);
-  const [showProblemsPane, setShowProblemsPane] = useState(false);
-  const [markers, setMarkers] = useState<ErrorMarker[]>([]);
   
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
+  const [bottomPanelTab, setBottomPanelTab] = useState<'terminals' | 'problems'>('problems');
+  const [markers, setMarkers] = useState<ErrorMarker[]>([]);
+  const [activeTerminals, setActiveTerminals] = useState<ProjectConfig[]>([]);
+
   const [diffMode, setDiffMode] = useState(false);
   const [originalContent, setOriginalContent] = useState('');
 
@@ -144,6 +149,16 @@ function App() {
     }
   }, [activeFile, fetchWorkDirs, fetchFileTree]);
 
+  const handleStartProjects = (projects: ProjectConfig[]) => {
+    setActiveTerminals(prev => {
+      const existingIds = new Set(prev.map(p => p.id));
+      const newProjs = projects.filter(p => !existingIds.has(p.id));
+      return [...prev, ...newProjs];
+    });
+    setBottomPanelTab('terminals');
+    setBottomPanelOpen(true);
+  };
+
   return (
     <div className="flex h-screen bg-sidebar text-white overflow-hidden font-sans">
       <Sidebar 
@@ -155,6 +170,7 @@ function App() {
         workDirs={workDirs}
         onAddFolder={handleAddFolder}
         onRemoveFolder={handleRemoveFolder}
+        onStartProjects={handleStartProjects}
       />
       <div className="flex-1 flex flex-col bg-editor min-w-0">
         <div className="h-10 bg-sidebar border-b border-white/5 flex items-center justify-end px-4 space-x-4">
@@ -167,11 +183,18 @@ function App() {
             <span>Error Lens</span>
           </label>
           <button 
-            onClick={() => setShowProblemsPane(!showProblemsPane)}
-            className={`flex items-center space-x-1 text-xs transition-colors ${showProblemsPane ? 'text-accent' : 'text-gray-400 hover:text-white'}`}
+            onClick={() => { setBottomPanelTab('problems'); setBottomPanelOpen(!bottomPanelOpen); }}
+            className={`flex items-center space-x-1 text-xs transition-colors ${bottomPanelOpen && bottomPanelTab === 'problems' ? 'text-accent' : 'text-gray-400 hover:text-white'}`}
           >
             <AlertCircle size={14} />
             <span>Problems ({markers.length})</span>
+          </button>
+          <button 
+            onClick={() => { setBottomPanelTab('terminals'); setBottomPanelOpen(!bottomPanelOpen); }}
+            className={`flex items-center space-x-1 text-xs transition-colors ${bottomPanelOpen && bottomPanelTab === 'terminals' ? 'text-accent' : 'text-gray-400 hover:text-white'}`}
+          >
+            <TerminalSquare size={14} />
+            <span>Terminals ({activeTerminals.length})</span>
           </button>
         </div>
 
@@ -195,31 +218,71 @@ function App() {
             </div>
           )}
           
-          {showProblemsPane && (
-            <div className="absolute bottom-0 left-0 right-0 h-48 bg-sidebar border-t border-white/10 flex flex-col shadow-xl z-10">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-black/20">
-                <div className="flex items-center space-x-2 text-xs font-medium text-gray-300">
-                  <AlertCircle size={14} className="text-red-400" />
-                  <span>Problems</span>
+          {bottomPanelOpen && (
+            <div className="absolute bottom-0 left-0 right-0 h-64 bg-sidebar border-t border-white/10 flex flex-col shadow-xl z-10">
+              <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/5 bg-black/20">
+                <div className="flex items-center space-x-6">
+                  <button onClick={() => setBottomPanelTab('problems')} className={`text-xs font-medium flex items-center space-x-1.5 transition-colors ${bottomPanelTab === 'problems' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                    <AlertCircle size={14} className={bottomPanelTab === 'problems' ? 'text-red-400' : ''} />
+                    <span>Problems</span>
+                  </button>
+                  <button onClick={() => setBottomPanelTab('terminals')} className={`text-xs font-medium flex items-center space-x-1.5 transition-colors ${bottomPanelTab === 'terminals' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}>
+                    <TerminalSquare size={14} className={bottomPanelTab === 'terminals' ? 'text-blue-400' : ''} />
+                    <span>Terminals</span>
+                  </button>
                 </div>
-                <button onClick={() => setShowProblemsPane(false)} className="text-gray-500 hover:text-white">
+                <button onClick={() => setBottomPanelOpen(false)} className="text-gray-500 hover:text-white">
                   <X size={14} />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto p-2">
-                {markers.length === 0 ? (
-                  <div className="text-xs text-gray-500 p-2 text-center mt-4">No problems found</div>
-                ) : (
-                  <div className="space-y-1">
-                    {markers.map((marker, i) => (
-                      <div key={i} className="flex items-start space-x-3 text-xs p-2 hover:bg-white/5 rounded cursor-pointer">
-                        <AlertCircle size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
-                        <div>
-                          <div className="text-gray-300">{marker.message}</div>
-                          <div className="text-gray-500 mt-0.5">Line {marker.startLineNumber}, Column {marker.startColumn}</div>
-                        </div>
+              
+              <div className="flex-1 overflow-hidden relative">
+                {bottomPanelTab === 'problems' && (
+                  <div className="h-full overflow-y-auto p-2">
+                    {markers.length === 0 ? (
+                      <div className="text-xs text-gray-500 p-2 text-center mt-4">No problems found</div>
+                    ) : (
+                      <div className="space-y-1">
+                        {markers.map((marker, i) => (
+                          <div key={i} className="flex items-start space-x-3 text-xs p-2 hover:bg-white/5 rounded cursor-pointer">
+                            <AlertCircle size={14} className="text-red-400 mt-0.5 flex-shrink-0" />
+                            <div>
+                              <div className="text-gray-300">{marker.message}</div>
+                              <div className="text-gray-500 mt-0.5">Line {marker.startLineNumber}, Column {marker.startColumn}</div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                  </div>
+                )}
+                
+                {bottomPanelTab === 'terminals' && (
+                  <div className="h-full flex overflow-x-auto">
+                    {activeTerminals.length === 0 ? (
+                      <div className="flex-1 flex items-center justify-center text-xs text-gray-500">No active terminals</div>
+                    ) : (
+                      activeTerminals.map(term => (
+                        <div key={term.id} className="flex-1 min-w-[300px] border-r border-white/5 last:border-r-0 flex flex-col">
+                          <div className="bg-black/40 px-3 py-1 flex items-center justify-between border-b border-white/5 flex-shrink-0">
+                            <div className="flex items-center space-x-2 truncate">
+                              <span className="text-[10px] text-gray-400 font-mono truncate" title={term.command}>{term.command}</span>
+                              <span className="text-[10px] text-gray-500 bg-white/5 px-1.5 rounded">{term.path.split(/[\\/]/).pop()}</span>
+                            </div>
+                            <button onClick={() => setActiveTerminals(prev => prev.filter(t => t.id !== term.id))} className="text-gray-500 hover:text-red-400 ml-2">
+                              <X size={12} />
+                            </button>
+                          </div>
+                          <div className="flex-1 min-h-0 bg-[#0d1117]">
+                            <Terminal 
+                              id={term.id} 
+                              command={term.command} 
+                              cwd={term.path} 
+                            />
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
